@@ -1,100 +1,99 @@
+using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
+
+// This script is for a flashlight that charges in "chunks" when you hold a key.
+// If you stop holding, the flashlight won't fully charge that chunk. 
+// Also, the flashlight slowly loses brightness (decays) if you're not charging.
+// We use a long wind-up audio clip that "scrubs" according to how far we've charged,
+// plus a short clank sound at the end of each chunk.
 
 [RequireComponent(typeof(Light))]
 public class CrankFlashlightReactiveAudio : MonoBehaviour
 {
     [Header("Key Setup")]
     public KeyCode chargeKey = KeyCode.E;
+    // Press/hold this key to charge the flashlight.
 
     [Header("Light Settings")]
-    public float maxIntensity = 8f;      // The absolute maximum brightness
-    public float chargeChunk = 2f;       // How much intensity to gain each chunk
-    public float chargeRate = 1f;        // How fast we charge toward the next chunk
-    public float decayRate = 0.5f;       // How fast intensity decays when not charging
+    public float maxIntensity = 8f;   // Highest brightness the flashlight can reach.
+    public float chargeChunk = 2f;    // How much brightness is gained per "chunk."
+    public float chargeRate = 1f;     // How fast we move toward each chunk's target intensity.
+    public float decayRate = 0.5f;    // How fast the flashlight dims when not charging.
 
     [Header("Audio")]
-    public AudioSource windUpAudio;      // Assign your wind-up AudioSource (with the long wind-up clip)
-    public AudioSource clankAudio;       // Assign a separate AudioSource for the "clank"
-    public AudioClip clankClip;          // Assign a short "clank" clip here
+    public AudioSource windUpAudio;   // For the continuous wind-up sound.
+    public AudioSource clankAudio;    // For the short clank sound at the end of a chunk.
+    public AudioClip clankClip;       // Assign the audio file for the clank here.
 
-    // If true, we immediately stop (or fade out) the wind-up clip 
-    // at the exact moment the chunk finishes charging.
-    public bool stopAudioOnChunkFinish = true;
+    private Light flashlight;         // We'll store the Light component so we can change intensity.
+    private float currentIntensity = 0f; // Track how bright the flashlight is at any time.
 
-    private Light flashlight;
-    private float currentIntensity = 0f;
-
-    // The intensity we started charging *from* when we began this chunk
+    // We'll charge from chunkStartIntensity up to targetIntensity in each chunk.
     private float chunkStartIntensity = 0f;
-
-    // The target intensity for the *current* chunk
     private float targetIntensity = 0f;
 
-    private bool isCharging = false;     // True while the user is actively holding the key
-    private bool chunkFinished = false;  // Reached chunk target => must release before next chunk
+    // isCharging means the key is held down. chunkFinished means we hit our chunk goal
+    // and need to release the key before starting another chunk.
+    private bool isCharging = false;
+    private bool chunkFinished = false;
 
     void Start()
     {
+        // Grab the Light component so we can set flashlight.intensity later.
         flashlight = GetComponent<Light>();
         flashlight.intensity = currentIntensity;
 
-        // Ensure these AudioSources aren't set to play on awake unless desired
+        // Make sure these AudioSources won't start automatically or loop unless we want them to.
         if (windUpAudio != null)
         {
             windUpAudio.playOnAwake = false;
-            windUpAudio.loop = false; // Typically you won't loop a wind-up clip
+            windUpAudio.loop = false;
         }
-
         if (clankAudio != null)
         {
             clankAudio.playOnAwake = false;
-            // Usually "clank" is a short effect so no loop
             clankAudio.loop = false;
         }
     }
 
     void Update()
     {
+        // Split logic so it's easier to read: one part handles charging, another handles decay.
         HandleCharging();
         HandleDecaying();
     }
 
     private void HandleCharging()
     {
-        // 1) On key down (fresh press):
-        //    - Only start if not already charging
-        //    - and we haven't completed a chunk that hasn't been released yet
+        // 1) If I press the key, and I'm not charging already, 
+        //    and I haven't finished a chunk that I haven't released yet, start charging a new chunk.
         if (Input.GetKeyDown(chargeKey) && !isCharging && !chunkFinished)
         {
-            // Begin charging
             isCharging = true;
-
-            // Store where we started this chunk
             chunkStartIntensity = currentIntensity;
-
-            // New chunk target: current + chargeChunk, clamped by max
             targetIntensity = Mathf.Min(currentIntensity + chargeChunk, maxIntensity);
 
-            // Start wind-up audio from the beginning
+            // If we have a wind-up sound, stop and reset it to 0 before playing.
             if (windUpAudio != null)
             {
-                windUpAudio.Stop();     // In case it was still playing
-                windUpAudio.time = 0f;  // Reset to start
-                windUpAudio.Play();     // Begin playing
+                windUpAudio.Stop();
+                windUpAudio.time = 0f;
+                windUpAudio.Play();
             }
         }
 
-        // 2) If we are currently charging:
+        // 2) If we are in the process of charging:
         if (isCharging)
         {
-            // If the user lets go mid-charge, we stop immediately
+            // Check if the key is still held. If the player let go early, stop charging.
             if (!Input.GetKey(chargeKey))
             {
                 StopChargingEarly();
                 return;
             }
 
-            // Move toward the chunk target
+            // Otherwise, move the flashlight's intensity closer to our target chunk over time.
             currentIntensity = Mathf.MoveTowards(
                 currentIntensity,
                 targetIntensity,
@@ -102,27 +101,22 @@ public class CrankFlashlightReactiveAudio : MonoBehaviour
             );
             flashlight.intensity = currentIntensity;
 
-            // Update the wind-up audio’s playback position to match how far we've charged
+            // We'll also update the position in the wind-up audio clip so it sounds like we're "advancing" in real time.
             UpdateWindUpAudio();
 
-            // Check if we’ve hit the chunk target (or max)
+            // If we've reached the chunk's target (no more to charge in this chunk):
             if (Mathf.Approximately(currentIntensity, targetIntensity))
             {
                 chunkFinished = true;
                 isCharging = false;
 
-                // Stop the wind-up audio if desired
-                if (windUpAudio != null && stopAudioOnChunkFinish)
-                {
-                    windUpAudio.Stop();
-                }
-
-                // Play the "clank" sound to indicate the chunk is fully charged
+                // Play a clank sound to let us know we've maxed out this chunk.
                 PlayClankSound();
             }
         }
 
-        // 3) Once chunk is finished, the user must release to reset chunkFinished
+        // 3) Once a chunk is finished, the user has to release the key to reset 'chunkFinished' 
+        //    before we can crank up another chunk.
         if (Input.GetKeyUp(chargeKey) && chunkFinished)
         {
             chunkFinished = false;
@@ -131,7 +125,7 @@ public class CrankFlashlightReactiveAudio : MonoBehaviour
 
     private void HandleDecaying()
     {
-        // If not charging and there's some brightness left, decay the intensity
+        // If we're not charging at all, the flashlight slowly dims over time until it goes dark (0 intensity).
         if (!isCharging && currentIntensity > 0f)
         {
             currentIntensity = Mathf.MoveTowards(
@@ -145,9 +139,10 @@ public class CrankFlashlightReactiveAudio : MonoBehaviour
 
     private void StopChargingEarly()
     {
+        // If we let go of the key mid-charge, we don't get a full chunk, so we stop right away.
         isCharging = false;
 
-        // Stop or fade out the wind-up sound
+        // Also stop the wind-up sound (in case it's still playing).
         if (windUpAudio != null && windUpAudio.isPlaying)
         {
             windUpAudio.Stop();
@@ -156,37 +151,40 @@ public class CrankFlashlightReactiveAudio : MonoBehaviour
 
     private void UpdateWindUpAudio()
     {
+        // This is where we "scrub" the wind-up clip time to match how far along we are in the current chunk.
         if (windUpAudio == null || windUpAudio.clip == null) return;
 
         float chunkSize = targetIntensity - chunkStartIntensity;
         float chunkProgress = 0f;
+
         if (!Mathf.Approximately(chunkSize, 0f))
         {
             chunkProgress = (currentIntensity - chunkStartIntensity) / chunkSize;
         }
 
-        // Clamp the fraction strictly between 0 and 1
+        // Clamp the progress between 0 and 1, just in case.
         chunkProgress = Mathf.Clamp01(chunkProgress);
 
-        // Calculate newTime. Subtract a small epsilon so we never hit the clip’s exact length
+        // Now figure out how far into the audio clip we want to be.
+        // Subtract a bit so we don't accidentally go beyond the clip length.
         float newTime = chunkProgress * (windUpAudio.clip.length - 0.001f);
 
-        // Only set the time if there's a big enough difference to avoid constant scrubbing
+        // If there's a big difference from the current audio time, set it. 
+        // This avoids micro-scrubbing that can make the audio stutter.
         if (Mathf.Abs(windUpAudio.time - newTime) > 0.05f)
         {
-            // Additional clamp for extra safety
             newTime = Mathf.Clamp(newTime, 0f, windUpAudio.clip.length - 0.001f);
-
             windUpAudio.time = newTime;
         }
     }
 
-
     private void PlayClankSound()
     {
+        // This plays the short clank clip to signal "chunk fully charged!"
         if (clankAudio != null && clankClip != null)
         {
-            clankAudio.Stop(); //if something's playing
+            // Stopping just in case there's a leftover clank playing (rare, but safe).
+            clankAudio.Stop();
             clankAudio.clip = clankClip;
             clankAudio.Play();
         }
