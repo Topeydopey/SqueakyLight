@@ -154,44 +154,41 @@ public class CrankFlashlightReactiveAudio : MonoBehaviour
         }
     }
 
-private void UpdateWindUpAudio()
-{
-    if (windUpAudio == null || windUpAudio.clip == null) return;
-
-    float chunkSize = targetIntensity - chunkStartIntensity;
-    float chunkProgress = 0f;
-    if (!Mathf.Approximately(chunkSize, 0f))
+    private void UpdateWindUpAudio()
     {
-        chunkProgress = (currentIntensity - chunkStartIntensity) / chunkSize;
+        if (windUpAudio == null || windUpAudio.clip == null) return;
+
+        float chunkSize = targetIntensity - chunkStartIntensity;
+        float chunkProgress = 0f;
+        if (!Mathf.Approximately(chunkSize, 0f))
+        {
+            chunkProgress = (currentIntensity - chunkStartIntensity) / chunkSize;
+        }
+
+        // Clamp the fraction strictly between 0 and 1
+        chunkProgress = Mathf.Clamp01(chunkProgress);
+
+        // Calculate newTime. Subtract a small epsilon so we never hit the clip’s exact length
+        float newTime = chunkProgress * (windUpAudio.clip.length - 0.001f);
+
+        // Only set the time if there's a big enough difference to avoid constant scrubbing
+        if (Mathf.Abs(windUpAudio.time - newTime) > 0.05f)
+        {
+            // Additional clamp for extra safety
+            newTime = Mathf.Clamp(newTime, 0f, windUpAudio.clip.length - 0.001f);
+
+            windUpAudio.time = newTime;
+        }
     }
-
-    // Clamp the fraction strictly between 0 and 1
-    chunkProgress = Mathf.Clamp01(chunkProgress);
-
-    // Calculate newTime. Subtract a small epsilon so we never hit the clip’s exact length
-    float newTime = chunkProgress * (windUpAudio.clip.length - 0.001f);
-
-    // Only set the time if there's a big enough difference to avoid constant scrubbing
-    if (Mathf.Abs(windUpAudio.time - newTime) > 0.05f)
-    {
-        // Additional clamp for extra safety
-        newTime = Mathf.Clamp(newTime, 0f, windUpAudio.clip.length - 0.001f);
-
-        windUpAudio.time = newTime;
-    }
-}
 
 
     private void PlayClankSound()
     {
-        // If we have a valid AudioSource and clip
         if (clankAudio != null && clankClip != null)
         {
-            clankAudio.Stop(); // Just to be safe, if something's playing
+            clankAudio.Stop(); //if something's playing
             clankAudio.clip = clankClip;
             clankAudio.Play();
         }
-        // If you prefer using PlayOneShot:
-        // clankAudio.PlayOneShot(clankClip);
     }
 }
